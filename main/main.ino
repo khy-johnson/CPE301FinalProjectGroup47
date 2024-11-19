@@ -16,6 +16,8 @@ const int greenLEDPin = 11;
 const int blueLEDPin = 12;
 const int redLEDPin = 9;
 
+const int dcfanPin = 2;
+
 enum StateType {
   DISABLED,
   IDLE,
@@ -24,6 +26,9 @@ enum StateType {
 };
 
 StateType state = IDLE;
+
+int tempThreshold = 22;
+int waterThreshold = 25;
 
 void setup() {
   Serial.begin(9600);
@@ -35,26 +40,47 @@ void setup() {
   pinMode(greenLEDPin, OUTPUT);
   pinMode(blueLEDPin, OUTPUT);
   pinMode(redLEDPin, OUTPUT);
+
+  pinMode(dcfanPin, OUTPUT);
 }
 
 void loop() {
   updateLEDS();
+
+
+
+
   switch (state) {
     case DISABLED:  //fan off, yellow led on
       printLCD("DISABLED", "");
       //fan off
       break;
     case IDLE:  //fan off, green led on
-      readandPrintTemphumid();
+      updateTempHumidReading();
+      printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
+
+      digitalWrite(dcfanPin, LOW);
+
+      if (DHT.temperature > tempThreshold) {
+        state = RUNNING;
+      }
       break;
     case ERROR:  //red led on
       printLCD("Water level is too low", "");
       break;
     case RUNNING:  //fan on, blue led on
-      readandPrintTemphumid();
+      updateTempHumidReading();
+      printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
+
+      digitalWrite(dcfanPin, HIGH);
+
+      if (DHT.temperature <= tempThreshold) {
+        state = IDLE;
+      }
+
+      // if (waterLevel < waterThreshold) {state = ERROR;}
       break;
-    default:
-  }
+  };
 
   delay(100);
 }
@@ -66,14 +92,8 @@ void printLCD(String firstLine, String secondLine) {
   lcd.print(secondLine);
 }
 
-void readandPrintTemphumid() {
+void updateTempHumidReading() {
   int chk = DHT.read11(humidTempPin);
-  if (DHT.temperature > 25) {
-    state = RUNNING;
-  } else if (DHT.temperature <= 25) {
-    state = IDLE;
-  } else if printLCD ("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity))
-    ;
 }
 
 void updateLEDS() {
