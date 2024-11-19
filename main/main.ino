@@ -18,6 +18,13 @@ const int redLEDPin = 9;
 
 const int dcfanPin = 2;
 
+const int offButtonPin = 8;
+const int onButtonPin = 7;
+
+const int waterSensorPin = A15;
+
+int waterLevel = 0;
+
 enum StateType {
   DISABLED,
   IDLE,
@@ -27,8 +34,9 @@ enum StateType {
 
 StateType state = IDLE;
 
-int tempThreshold = 22;
-int waterThreshold = 25;
+
+int tempThreshold = 20;
+int waterThreshold = 100;
 
 void setup() {
   Serial.begin(9600);
@@ -42,47 +50,64 @@ void setup() {
   pinMode(redLEDPin, OUTPUT);
 
   pinMode(dcfanPin, OUTPUT);
+  pinMode(offButtonPin, INPUT_PULLUP);
+  pinMode(onButtonPin, INPUT_PULLUP);
 }
 
 void loop() {
   updateLEDS();
 
+  if (digitalRead(onButtonPin) == LOW) {
+    changeState(DISABLED);
 
+  } else if (digitalRead(offButtonPin) == LOW) {
+    changeState(IDLE);
+  }
+
+  waterLevel = analogRead(waterSensorPin);
+
+  Serial.print("Water level:");
+  Serial.println(waterLevel);
 
 
   switch (state) {
     case DISABLED:  //fan off, yellow led on
       printLCD("DISABLED", "");
-      //fan off
+      digitalWrite(dcfanPin, LOW);
       break;
     case IDLE:  //fan off, green led on
       updateTempHumidReading();
       printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
 
+      checkWaterLevel();
       digitalWrite(dcfanPin, LOW);
 
       if (DHT.temperature > tempThreshold) {
-        state = RUNNING;
+        changeState(RUNNING);
       }
       break;
     case ERROR:  //red led on
-      printLCD("Water level is too low", "");
+      checkWaterLevel();
+      printLCD("Water level is", "too low!");
+      digitalWrite(dcfanPin, LOW);
       break;
     case RUNNING:  //fan on, blue led on
       updateTempHumidReading();
       printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
 
       digitalWrite(dcfanPin, HIGH);
+      checkWaterLevel();
 
-      if (DHT.temperature <= tempThreshold) {
-        state = IDLE;
-      }
-
-      // if (waterLevel < waterThreshold) {state = ERROR;}
       break;
   };
 
+
   delay(100);
+}
+
+void changeState(StateType newState) {
+  state = newState;
+  lcd.clear();
 }
 
 void printLCD(String firstLine, String secondLine) {
@@ -94,6 +119,12 @@ void printLCD(String firstLine, String secondLine) {
 
 void updateTempHumidReading() {
   int chk = DHT.read11(humidTempPin);
+}
+
+void checkWaterLevel() {
+  if (waterLevel <= waterThreshold) {
+    changeState(ERROR);
+  }
 }
 
 void updateLEDS() {
