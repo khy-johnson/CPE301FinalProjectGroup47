@@ -1,43 +1,42 @@
 //Tyler Olson & Khyber Johnson
-//CPE 301 Final Project group 47
-//Swamp Cooler Code
+#include <I2C_RTC.h>
+#include <Stepper.h>
+#include <LiquidCrystal.h>
+#include <dht.h>
 
-#include <LiquidCrystal.h> //LCD Arduino Library
-#include <dht.h>  //DC Motor Arduino Library
-#include <I2C_RTC.h> //Real Time Clock Arduino Library
-#include <Stepper.h> //Stepper Motor Arduino Library
-
-dht DHT;
+static dht DHT;
 static DS1307 RTC;
 
-const int stepsPerRevolution = 2048;
-//Creates an instance of stepper class
-//Pins entered in sequence IN1-IN3-IN2-IN4 for proper step sequence
-Stepper myStepper = Stepper(stepsPerRevolution, 23, 27, 25, 29);
+//Stepper motor
+const int STEPS_PER_REV = 2048;
+Stepper myStepper = Stepper(STEPS_PER_REV, 23, 27, 25, 29);  // IN1-IN3-IN2-IN4
 
 //LCD pins
 const int RS = 50, EN = 52, D4 = 40, D5 = 42, D6 = 44, D7 = 46;
 LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
 
 //Temp sensor pin
-const int humidTempPin = 3;
+const int HUMID_TEMP_PIN = 3;
 
-//led pins
-const int yellowLEDPin = 10;
-const int greenLEDPin = 11;
-const int blueLEDPin = 12;
-const int redLEDPin = 9;
+//LED pins
+const int YELLOW_LED_PIN = 10;
+const int GREEN_LED_PIN = 11;
+const int BLUE_LED_PIN = 12;
+const int RED_LED_PIN = 9;
 
-const int dcfanPin = 2;
-const int offButtonPin = 8;
-const int onButtonPin = 7;
-const int waterSensorPin = A15;
-int clockwisePin = 33;
-int counterclockwisePin = 35;
-int waterLevel = 0;
+//DC fan pin
+const int DC_FAN_PIN = 2;
 
-volatile bool onButtonPressed = false;
-volatile bool offButtonPressed = false;
+//State button pins
+const int OFF_BUTTON_PIN = 8;
+const int ON_BUTTON_PIN = 7;
+
+//Stepper motor pins
+int CLOCKWISE_PIN = 33;
+int COUNTER_CLOCKWISE_PIN = 35;
+
+//Water sensor pin
+const int WATER_PIN = A15;
 
 enum StateType {
   DISABLED,
@@ -47,10 +46,12 @@ enum StateType {
 };
 
 StateType state = IDLE;
+int waterLevel = 0;
+unsigned long previousMillis = 0;
 
-
-int tempThreshold = 22;
-int waterThreshold = 100;
+const int UPDATE_INTERVAL = 60000;
+const int TEMP_THRESHOLD = 22;
+const int WATER_THRESHOLD = 25;
 
 void setup() {
   Serial.begin(9600);
@@ -59,37 +60,182 @@ void setup() {
 
   myStepper.setSpeed(10);
 
-  //Set LED pins as OUTPUT (DDRx corresponds to the data direction register)
-  DDRB |= (1 << DDB1); //Pin 9
-  DDRB |= (1 << DDB2); //Pin 10
-  DDRB |= (1 << DDB3); //Pin 11
-  DDRB |= (1 << DDB4); //Pin 12
+  //init LEDs
+  pinMode(YELLOW_LED_PIN, OUTPUT);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(BLUE_LED_PIN, OUTPUT);
+  pinMode(RED_LED_PIN, OUTPUT);
 
-  //Set DC fan pin as OUTPUT
-  DDRD |= (1 << DDD2); //Pin 2
+  pinMode(DC_FAN_PIN, OUTPUT);
+  pinMode(OFF_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ON_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(CLOCKWISE_PIN, INPUT_PULLUP);
+  pinMode(COUNTER_CLOCKWISE_PIN, INPUT_PULLUP);
 
-  //Set On/Off buttons as INPUT_PULLUP
-  DDRD &= ~(1 << DDD7); //Pin 7 (INPUT)
-  PORTD |= (1 << PORTD7); //Enable pull-up resistor
-
-  DDRB &= ~(1 << DDB0); //Pin 8 (INPUT)
-  PORTB |= (1 << PORTB0); //Enable pull-up resistor
-
-  //Set clockwise and counterclockwise pins as INPUT_PULLUP
-  DDRA &= ~(1 << DDA1); //Pin 33 (INPUT)
-  PORTA |= (1 << PORTA1); //Enable pull-up resistor
-
-  DDRA &= ~(1 << DDA3); //Pin 35 (INPUT)
-  PORTA |= (1 << PORTA3); //Enable pull-up resistor
+  updateTempHumidReading();
 
   while (!Serial) {
-    ;  //wait for serial port to connect. Needed for native USB port only
+    ;  // wait for serial port to connect. Needed for native USB port only
   }
 
   if (RTC.begin() == false) {
     Serial.println("RTC Not Connected!");
     while (true)
       ;
+  }
+}
+
+void loop() {
+  updateLEDS();
+  handleStateButtons();
+
+  waterLevel = analogRead(WATER_PIN);
+  unsigned long currentMillis = millis();
+
+  switch (state) {
+    case DISABLED:  //fan off, yellow led on
+      printLCD("DISABLED", "");
+      digitalWrite(DC_FAN_PIN, LOW);
+      break;
+    case IDLE:  //fan off, green led on
+      printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
+
+      if (currentMillis - previousMillis >= UPDATE_INTERVAL) {
+        previousMillis = currentMillis;
+
+        updateTempHumidReading();
+      }
+
+      handleStepperButtons();
+      checkWaterLevel();
+
+      digitalWrite(DC_FAN_PIN, LOW);
+
+      if (DHT.temperature > TEMP_THRESHOLD) {
+        changeState(RUNNING);
+      }
+      break;
+    case ERROR:  //red led on
+      printLCD("Water level is", "too low!");
+
+      checkWaterLevel();
+
+      digitalWrite(DC_FAN_PIN, LOW);
+      break;
+    case RUNNING:  //fan on, blue led on
+      printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
+      if (currentMillis - previousMillis >= UPDATE_INTERVAL) {
+        previousMillis = currentMillis;
+
+        updateTempHumidReading();
+      }
+
+      handleStepperButtons();
+      checkWaterLevel();
+
+      digitalWrite(DC_FAN_PIN, HIGH);
+
+      if (DHT.temperature <= TEMP_THRESHOLD) {
+        changeState(IDLE);
+      }
+      break;
+  };
+}
+
+void handleStateButtons() {
+  if (digitalRead(ON_BUTTON_PIN) == LOW) {
+    changeState(DISABLED);
+
+  } else if (digitalRead(OFF_BUTTON_PIN) == LOW) {
+    changeState(IDLE);
+  }
+}
+
+void handleStepperButtons() {
+  while (digitalRead(CLOCKWISE_PIN) == LOW && digitalRead(COUNTER_CLOCKWISE_PIN) == HIGH) {
+    myStepper.step(64);
+  }
+
+  while (digitalRead(CLOCKWISE_PIN) == HIGH && digitalRead(COUNTER_CLOCKWISE_PIN) == LOW) {
+    myStepper.step(-64);
+  }
+}
+
+void changeState(StateType newState) {
+  if (newState == state) {
+    return;
+  }
+
+  if (newState == RUNNING) {
+    Serial.print("Fan turned ON at: " + getCurrentTime());
+  } else if (state == RUNNING) {
+    Serial.print("Fan turned OFF at: " + getCurrentTime());
+  }
+
+  state = newState;
+  lcd.clear();
+}
+
+void printLCD(String firstLine, String secondLine) {
+  lcd.setCursor(0, 0);
+  lcd.print(firstLine);
+  lcd.setCursor(0, 1);
+  lcd.print(secondLine);
+}
+
+String stateToString(StateType stateEnum) {
+  switch (stateEnum) {
+    case DISABLED:
+      return "DISABLED";
+      break;
+    case IDLE:
+      return "IDLE";
+      break;
+    case RUNNING:
+      return "RUNNING";
+      break;
+    case ERROR:
+      return "ERROR";
+      break;
+  }
+}
+
+void updateTempHumidReading() {
+  int chk = DHT.read11(HUMID_TEMP_PIN);
+}
+
+void checkWaterLevel() {
+  if (waterLevel <= WATER_THRESHOLD) {
+    changeState(ERROR);
+  }
+}
+
+void updateLEDS() {
+  switch (state) {
+    case DISABLED:
+      digitalWrite(YELLOW_LED_PIN, HIGH);
+      digitalWrite(GREEN_LED_PIN, LOW);
+      digitalWrite(BLUE_LED_PIN, LOW);
+      digitalWrite(RED_LED_PIN, LOW);
+      break;
+    case IDLE:
+      digitalWrite(YELLOW_LED_PIN, LOW);
+      digitalWrite(GREEN_LED_PIN, HIGH);
+      digitalWrite(BLUE_LED_PIN, LOW);
+      digitalWrite(RED_LED_PIN, LOW);
+      break;
+    case RUNNING:
+      digitalWrite(YELLOW_LED_PIN, LOW);
+      digitalWrite(GREEN_LED_PIN, LOW);
+      digitalWrite(BLUE_LED_PIN, HIGH);
+      digitalWrite(RED_LED_PIN, LOW);
+      break;
+    case ERROR:
+      digitalWrite(YELLOW_LED_PIN, LOW);
+      digitalWrite(GREEN_LED_PIN, LOW);
+      digitalWrite(BLUE_LED_PIN, LOW);
+      digitalWrite(RED_LED_PIN, HIGH);
+      break;
   }
 }
 
@@ -142,218 +288,4 @@ String getCurrentTime() {
   }
   output += "\n";
   return output;
-
-  //Attach interrupts to On/Off buttons
-  attachInterrupt(digitalPinToInterrupt(onButtonPin), onButtonISR, FALLING);
-  attachInterrupt(digitalPinToInterrupt(offButtonPin), offButtonISR, FALLING);
 }
-
-
-
-
-void loop() {
-  updateLEDS();
-
-  if (customDigitalRead(onButtonPin) == LOW) {
-    changeState(DISABLED);
-    onButtonPressed = false;
-
-  } else if (customDigitalRead(offButtonPin) == LOW) {
-    changeState(IDLE);
-    offButtonPressed = false;  // Reset flag
-  }
-
-  while (customDigitalRead(clockwisePin) == LOW && customDigitalRead(counterclockwisePin) == HIGH) {
-    myStepper.step(64);
-  }
-
-  while (customDigitalRead(clockwisePin) == HIGH && customDigitalRead(counterclockwisePin) == LOW) {
-    myStepper.step(-64);
-  }
-
-
-  waterLevel = customAnalogRead(waterSensorPin);
-
-
-  switch (state) {
-    case DISABLED:  //fan off, yellow led on
-      printLCD("DISABLED", "");
-      customDigitalWrite(dcfanPin, LOW);
-      break;
-    case IDLE:  //fan off, green led on
-      updateTempHumidReading();
-      printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
-
-      checkWaterLevel();
-      customDigitalWrite(dcfanPin, LOW);
-
-      if (DHT.temperature > tempThreshold) {
-        changeState(RUNNING);
-      }
-      break;
-    case ERROR:  //red led on
-      checkWaterLevel();
-      printLCD("Water level is", "too low!");
-      customDigitalWrite(dcfanPin, LOW);
-      break;
-    case RUNNING:  //fan on, blue led on
-      updateTempHumidReading();
-      printLCD("Temp: " + String(DHT.temperature), "Humidity:" + String(DHT.humidity));
-
-      if (DHT.temperature <= tempThreshold) {
-        changeState(IDLE);
-      }
-      customDigitalWrite(dcfanPin, HIGH);
-      checkWaterLevel();
-
-      break;
-  };
-
-
-  customDelay(60000); //1 Minute update cycle
-}
-
-void changeState(StateType newState) {
-  if (newState == state) {
-    return;
-  }
-
-  Serial.print("New State: " + stateToString(newState) + ", at: " + getCurrentTime());
-  state = newState;
-  lcd.clear();
-}
-
-void printLCD(String firstLine, String secondLine) {
-  lcd.setCursor(0, 0);
-  lcd.print(firstLine);
-  lcd.setCursor(0, 1);
-  lcd.print(secondLine);
-}
-
-String stateToString(StateType stateEnum) {
-  switch (stateEnum) {
-    case DISABLED:
-      return "DISABLED";
-      break;
-    case IDLE:
-      return "IDLE";
-      break;
-    case RUNNING:
-      return "RUNNING";
-      break;
-    case ERROR:
-      return "ERROR";
-      break;
-  }
-}
-
-void updateTempHumidReading() {
-  int chk = DHT.read11(humidTempPin);
-}
-
-void checkWaterLevel() {
-  if (waterLevel <= waterThreshold) {
-    changeState(ERROR);
-  }
-}
-
-void updateLEDS() {
-  switch (state) {
-    case DISABLED:
-      customDigitalWrite(yellowLEDPin, HIGH);
-      customDigitalWrite(greenLEDPin, LOW);
-      customDigitalWrite(blueLEDPin, LOW);
-      customDigitalWrite(redLEDPin, LOW);
-      break;
-    case IDLE:
-      customDigitalWrite(yellowLEDPin, LOW);
-      customDigitalWrite(greenLEDPin, HIGH);
-      customDigitalWrite(blueLEDPin, LOW);
-      customDigitalWrite(redLEDPin, LOW);
-      break;
-    case RUNNING:
-      customDigitalWrite(yellowLEDPin, LOW);
-      customDigitalWrite(greenLEDPin, LOW);
-      customDigitalWrite(blueLEDPin, HIGH);
-      customDigitalWrite(redLEDPin, LOW);
-      break;
-    case ERROR:
-      customDigitalWrite(yellowLEDPin, LOW);
-      customDigitalWrite(greenLEDPin, LOW);
-      customDigitalWrite(blueLEDPin, LOW);
-      customDigitalWrite(redLEDPin, HIGH);
-      break;
-  }
-}
-
-void customDigitalWrite(uint8_t pin, uint8_t value) {
-  if (pin >= 0 && pin <= 7) {
-    if (value == HIGH) {
-      PORTD |= (1 << pin);
-    } else {
-      PORTD &= ~(1 << pin);
-    }
-  } else if (pin >= 8 && pin <= 13) {
-    uint8_t bit = pin - 8;
-    if (value == HIGH) {
-      PORTB |= (1 << bit);
-    } else {
-      PORTB &= ~(1 << bit);
-    }
-  } else if (pin >= A0 && pin <= A7) {
-    uint8_t bit = pin - A0;
-    if (value == HIGH) {
-      PORTC |= (1 << bit);
-    } else {
-      PORTC &= ~(1 << bit);
-    }
-  }
-}
-
-uint8_t customDigitalRead(uint8_t pin) {
-  if (pin >= 0 && pin <= 7) {
-    return (PIND & (1 << pin)) ? HIGH : LOW;
-  } else if (pin >= 8 && pin <= 13) {
-    uint8_t bit = pin - 8;
-    return (PINB & (1 << bit)) ? HIGH : LOW;
-  } else if (pin >= A0 && pin <= A7) {
-    uint8_t bit = pin - A0;
-    return (PINC & (1 << bit)) ? HIGH : LOW;
-  }
-  return LOW;
-}
-
-int customAnalogRead(uint8_t pin) {
-  if (pin >= A0 && pin <= A7) {
-    pin -= A0;
-  } else if (pin > 7) {
-    return 0;
-  }
-
-  ADMUX = (ADMUX & 0xF0) | (pin & 0x0F);
-
-  ADCSRA |= (1 << ADSC);
-
-  while (ADCSRA & (1 << ADSC));
-
-  return ADC;
-}
-
-void customDelay(unsigned long milliseconds) {
-  unsigned long iterations = milliseconds * (F_CPU / 16000); 
-
-  for (unsigned long i = 0; i < iterations; i++) {
-    __asm__ __volatile__("nop");
-  }
-}
-
-// Interrupt Service Routine for the onButtonPin
-void onButtonISR() {
-  onButtonPressed = true; // Set the flag to indicate that the button was pressed
-}
-
-// Interrupt Service Routine for the offButtonPin
-void offButtonISR() {
-  offButtonPressed = true; // Set the flag to indicate that the button was pressed
-}
-
