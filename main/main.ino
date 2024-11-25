@@ -62,9 +62,9 @@ StateType state = IDLE;
 int waterLevel = 0;
 unsigned long previousMillis = 0;
 
-const int UPDATE_INTERVAL = 1000;
-const int TEMP_THRESHOLD = 20;
-const int WATER_THRESHOLD = 0;
+const int UPDATE_INTERVAL = 60000;
+const int TEMP_THRESHOLD = 22;
+const int WATER_THRESHOLD = 100;
 
 void setup() {
   U0init(9600);
