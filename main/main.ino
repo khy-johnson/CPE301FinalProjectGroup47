@@ -51,7 +51,7 @@ unsigned long previousMillis = 0;
 
 const int UPDATE_INTERVAL = 60000;
 const int TEMP_THRESHOLD = 22;
-const int WATER_THRESHOLD = 25;
+const int WATER_THRESHOLD = 0;
 
 void setup() {
   Serial.begin(9600);
@@ -61,16 +61,30 @@ void setup() {
   myStepper.setSpeed(10);
 
   //init LEDs
-  pinMode(YELLOW_LED_PIN, OUTPUT);
-  pinMode(GREEN_LED_PIN, OUTPUT);
-  pinMode(BLUE_LED_PIN, OUTPUT);
-  pinMode(RED_LED_PIN, OUTPUT);
+  DDRB |= (1 << PB4);  // Set Pin 10 (PB4) as output
+  DDRB |= (1 << PB5);  // Set Pin 11 (PB5) as output
+  DDRB |= (1 << PB6);  // Set Pin 12 (PB6) as output
+  DDRH |= (1 << PH6);  // Set Pin 9 (PH6) as output
 
-  pinMode(DC_FAN_PIN, OUTPUT);
-  pinMode(OFF_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(ON_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(CLOCKWISE_PIN, INPUT_PULLUP);
-  pinMode(COUNTER_CLOCKWISE_PIN, INPUT_PULLUP);
+  // DC motor
+  DDRE |= (1 << PE4);  //set pin 2 (PE4) as output
+
+  // off button
+  DDRH &= ~(1 << PH5);  // Set Pin 8 (PH5) as input
+  PORTH |= (1 << PH5);  // Enable pull-up resistor on Pin 8 (PH5)
+
+  //on button
+  DDRH &= ~(1 << PH4);  // Set Pin 7 (PH4) as input
+  PORTH |= (1 << PH4);  // Enable pull-up resistor on Pin 7 (PH4)
+
+  // clockwise button
+  DDRC &= ~(1 << PC4);  // Set Pin 33 (PC4) as input
+  PORTC |= (1 << PC4);  // Enable pull-up resistor on Pin 33 (PC4)
+
+  // counterclockwise button
+  DDRC &= ~(1 << PC2);  // Set Pin 35 (PC2) as input
+  PORTC |= (1 << PC2);  // Enable pull-up resistor on Pin 35 (PC2)
+
 
   updateTempHumidReading();
 
